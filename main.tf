@@ -30,6 +30,17 @@ data "aws_ami" "redhat" {
   }
 }
 
+data "aws_ami" "amazon_linux" {
+  most_recent = true
+
+  owners = ["137112412989"] # Amazon
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+}
+
 # -------------------------
 # Security Group
 # -------------------------
@@ -81,6 +92,18 @@ resource "aws_instance" "redhat" {
   }
 }
 
+resource "aws_instance" "amazon_linux" {
+  count         = 6
+  ami           = data.aws_ami.amazon_linux.id
+  instance_type = var.instance_type
+  key_name      = var.key_name
+  security_groups = [aws_security_group.ansible_sg.name]
+
+  tags = {
+    Name = "dev-web-${count.index + 1}"
+  }
+}
+
 
 
 # -------------------------
@@ -90,7 +113,8 @@ resource "local_file" "ansible_inventory" {
   filename = "${path.module}/inventory.ini"
 
   content = templatefile("${path.module}/inventory.tpl", {
-    ubuntu_ips = aws_instance.ubuntu[*].public_ip
-    redhat_ips = aws_instance.redhat[*].public_ip
+    ubuntu_ips      = aws_instance.ubuntu[*].public_ip
+    redhat_ips      = aws_instance.redhat[*].public_ip
+    amazon_linux_ips = aws_instance.amazon_linux[*].public_ip
   })
 }
