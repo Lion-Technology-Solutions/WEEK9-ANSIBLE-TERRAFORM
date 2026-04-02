@@ -1,33 +1,46 @@
 provider "aws" {
-  region = "ca-central-1"
+  region = var.region
 }
 
-# ---------------------------
-# Get latest Amazon Linux AMI dynamically
-# ---------------------------
-data "aws_ami" "latest_amazon_linux" {
+# -------------------------
+# Get latest Ubuntu AMI
+# -------------------------
+data "aws_ami" "ubuntu" {
   most_recent = true
 
-  owners = ["amazon"]
+  owners = ["099720109477"] # Canonical
 
   filter {
     name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+    values = ["ubuntu/images/hvm-ssd/ubuntu-*-22.04-amd64-server-*"]
   }
 }
 
-# ---------------------------
-# Security Group (SSH access)
-# ---------------------------
+# -------------------------
+# Get latest RedHat AMI
+# -------------------------
+data "aws_ami" "redhat" {
+  most_recent = true
+
+  owners = ["309956199498"] # RedHat
+
+  filter {
+    name   = "name"
+    values = ["RHEL-9.*-x86_64-*"]
+  }
+}
+
+# -------------------------
+# Security Group
+# -------------------------
 resource "aws_security_group" "ansible_sg" {
-  name        = "ansible-sg"
-  description = "Allow SSH"
+  name = "ansible-sg"
 
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # tighten in production
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
@@ -38,42 +51,46 @@ resource "aws_security_group" "ansible_sg" {
   }
 }
 
-# ---------------------------
-# EC2 Instances (count = 3)
-# ---------------------------
-resource "aws_instance" "ansible_nodes" {
+# -------------------------
+# Ubuntu Instances (db)
+# -------------------------
+resource "aws_instance" "ubuntu" {
   count         = 3
-  ami           = data.aws_ami.latest_amazon_linux.id
-  instance_type = "t2.micro"
-  key_name      = "sept23"
-
-  vpc_security_group_ids = [aws_security_group.ansible_sg.id]
+  ami           = data.aws_ami.ubuntu.id
+  instance_type = var.instance_type
+  key_name      = var.key_name
+  security_groups = [aws_security_group.ansible_sg.name]
 
   tags = {
-    Name = "ansible-node-${count.index + 1}"
+    Name = "db-${count.index + 1}"
   }
 }
 
-# ---------------------------
+# -------------------------
+# RedHat Instances (mtn)
+# -------------------------
+resource "aws_instance" "redhat" {
+  count         = 3
+  ami           = data.aws_ami.redhat.id
+  instance_type = var.instance_type
+  key_name      = var.key_name
+  security_groups = [aws_security_group.ansible_sg.name]
+
+  tags = {
+    Name = "mtn-${count.index + 1}"
+  }
+}
+
+
+
+# -------------------------
 # Generate Ansible Inventory
-# ---------------------------
+# -------------------------
 resource "local_file" "ansible_inventory" {
   filename = "${path.module}/inventory.ini"
 
-  content = <<EOT
-[web]
-%{ for instance in aws_instance.ansible_nodes ~}
-${instance.public_ip} ansible_user=ec2-user
-%{ endfor ~}
-
-[web:vars]
-ansible_ssh_private_key_file=~/.ssh/sept23.pem
-EOT
-}
-
-# ---------------------------
-# Output IPs
-# ---------------------------
-output "instance_ips" {
-  value = [for i in aws_instance.ansible_nodes : i.public_ip]
+  content = templatefile("${path.module}/inventory.tpl", {
+    ubuntu_ips = aws_instance.ubuntu[*].public_ip
+    redhat_ips = aws_instance.redhat[*].public_ip
+  })
 }
